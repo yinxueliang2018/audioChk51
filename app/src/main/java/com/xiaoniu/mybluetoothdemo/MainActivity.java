@@ -1,5 +1,7 @@
 package com.xiaoniu.mybluetoothdemo;
 
+import android.Manifest;
+import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothServerSocket;
@@ -8,13 +10,19 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.text.SpannableStringBuilder;
 import android.text.style.AbsoluteSizeSpan;
 import android.text.style.ForegroundColorSpan;
 import android.util.Base64;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -35,6 +43,7 @@ import java.io.IOException;
 
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URISyntaxException;
 import java.util.Calendar;
 import java.util.Map;
 import java.util.Set;
@@ -68,7 +77,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private GraphView graph1,graph2,graph3;
     BarGraphSeries<DataPoint> seriesLine1,seriesLine2,seriesLine3;
-    int iMaxPoints = 800;
+    int iMaxPoints = 400;
     int numTimeCycle = 40000;
     DataPoint[] values1 = new DataPoint[iMaxPoints];//心音波形数据
     DataPoint[] values2 = new DataPoint[iMaxPoints];//血氧波形数据
@@ -77,6 +86,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     int[] dEcg= new int[iMaxPoints];
     int ecgCounter = 0;
+    int[] dPcg = new int[iMaxPoints];
+    int hrtCounter = 0;
+
     String heartRate = "--";
     int[] hrArray = new int[15];
     int hrCounter = 0;
@@ -121,6 +133,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         setContentView(R.layout.activity_main);
         initView();
         dataValueReset();
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED){
+            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},1);
+        }
         /*seriesLine1 = new LineGraphSeries<DataPoint>(values1);
         seriesLine1.resetData(values1);
         seriesLine1.setThickness(5);
@@ -132,13 +147,13 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         seriesLine3.setThickness(5);*/
         seriesLine1 = new BarGraphSeries<DataPoint>(values1);
         seriesLine1.resetData(values1);
-        seriesLine1.setSpacing(50);
+        //seriesLine1.setSpacing(30);
         seriesLine2 = new BarGraphSeries<DataPoint>(values2);
         seriesLine2.resetData(values2);
-        seriesLine1.setSpacing(50);
+        //seriesLine2.setSpacing(30);
         seriesLine3 = new BarGraphSeries<DataPoint>(values3);
         seriesLine3.resetData(values3);
-        seriesLine1.setSpacing(50);;
+        //seriesLine3.setSpacing(30);;
 
         graph1 = (GraphView) findViewById(R.id.graph1);
         graph1.getViewport().setYAxisBoundsManual(true);
@@ -181,8 +196,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         graph3.getGridLabelRenderer().setHorizontalLabelsVisible(false);
         graph3.getGridLabelRenderer().setNumVerticalLabels(0);
         graph3.getGridLabelRenderer().setVerticalLabelsVisible(false);
-        graph3.getGridLabelRenderer().setGridColor(Color.WHITE);
-        seriesLine3.setColor(Color.WHITE);
+        graph3.getGridLabelRenderer().setGridColor(Color.GREEN);
+        seriesLine3.setColor(Color.GREEN);
         graph3.addSeries(seriesLine3);
 
         bTAdatper = BluetoothAdapter.getDefaultAdapter();
@@ -220,8 +235,8 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         wd_msg.setTextColor(Color.RED);
         xy_msg.setTextColor(Color.RED);
 
-        t1_msg.setTextColor(Color.GREEN);
-        t2_msg.setTextColor(Color.YELLOW);
+        t1_msg.setTextColor(Color.WHITE);
+        t2_msg.setTextColor(Color.RED);
         t3_msg.setTextColor(Color.WHITE);
 
         wd_msg.setTextSize(size);
@@ -290,9 +305,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                             e.printStackTrace();
                         }
                     }
+                    dp_msg.setText("");
                     searchDevices();
                 }
-                dp_msg.setText("");
+
                 if(chkFlag == 1){//主动停止采样并准备上传分析
                     try {
                         if (mStream != null) {
@@ -308,6 +324,17 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 }
                 break;
             case R.id.check:
+                String cmdS = text_name.getText().toString();
+                if(cmdS.equals("!f")&&(chkFlag != 1) && (chkFlag !=99)) {
+                    Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                    File f = new File(Environment.getExternalStorageDirectory() + "/心音文件");
+                    //intent.setDataAndType(Uri.fromFile(f),"*/*");
+                    intent.setType("*/*");
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    startActivityForResult(intent, 1);
+                    Toast.makeText(this, "打开文件...", Toast.LENGTH_SHORT).show();
+                    break;
+                }
 
                 if(!(mSocket!=null && mSocket.isConnected())){
                     dp_msg.setText(dp_msg.getText()+"请先启动测量...!");
@@ -331,7 +358,57 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
         }
     }
+    public String FileGetPath(Context context, Uri uri) throws URISyntaxException {
+        if ("content".equalsIgnoreCase(uri.getScheme())) {
+            String[] projection = { "_data" };
+            Cursor cursor = null;
+            try {
+                cursor = context.getContentResolver().query(uri, projection, null, null, null);
+                int column_index = cursor.getColumnIndexOrThrow("_data");
+                if (cursor.moveToFirst()) {
+                    return cursor.getString(column_index);
+                }
+            } catch (Exception e) {
+                // Eat it  Or Log it.
+            }
+        } else if ("file".equalsIgnoreCase(uri.getScheme())) {
+            return uri.getPath();
+        }
+        return null;
+    }
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (resultCode == Activity.RESULT_OK) {
+            if (requestCode == 1) {
+                Uri uri = data.getData();
+                //currentFile = uri.getPath().toString();
+                try {
+                    currentFile = FileGetPath(this, uri);
+                }catch (URISyntaxException e){
 
+                }
+                //Toast.makeText(this, "文件路径："+uri.getPath().toString(), Toast.LENGTH_SHORT).show();
+                Log.d("File Uri: " , uri.toString());
+                int start = -1;
+                if(currentFile != null){
+                    start = currentFile.lastIndexOf("/");
+                }else{
+                    dp_msg.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            dp_msg.setText(currentFile +"-文件出错...");
+                        }
+                    });
+
+                }
+                if(start != -1){
+                    fileName = currentFile.substring(start+1);
+                    dp_msg.setText(fileName);
+                    new Thread(networkTask).start();
+
+                }
+            }
+        }
+    }
     public String startModule(int i){
         String s = "";
         switch (i){
@@ -373,20 +450,27 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         Set<BluetoothDevice> pairedDevices = bTAdatper.getBondedDevices();
         //将其添加到设备列表中
 
+        int pairedFlag = 0;
         if (pairedDevices.size() > 0) {
             for (BluetoothDevice device : pairedDevices) {
                 adapter.add(device);
                 String s;
                 s = device.getName();
 
-                s = s.substring(0,3);
-                if (s.equals("HKL")){
-                    connectDevice(device);
+                if(s.length()>= 3){
+                    s = s.substring(0,3);
+                    if (s.equals("HKL") && (pairedFlag==0)){
+                        pairedFlag = 1;
+                        dp_msg.setText("测量启动中...");
+                        connectDevice(device);
+                    }
                 }
             }
+        } else{
+            dp_msg.setText("请通过手机设置菜单进行蓝牙配对：HKL-配对码XXXX：0438！");
         }
-        else{
-            text_state.setText("请检查蓝牙是否已配对，重新启动！");
+        if(pairedFlag != 1){
+            dp_msg.setText("请通过手机设置菜单进行蓝牙配对：HKL-配对码XXXX：0438！");
         }
     }
 
@@ -464,6 +548,11 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                 seriesLine1.resetData(values1);
                 //seriesLine.setSpacing(50);
                 graph1.addSeries(seriesLine1);
+                if(hrCounter == iMaxPoints){
+                    heartRate = hrPcg();
+                    hrCounter = 0;
+                }
+
             }
             ;
             if (hv == 2) {
@@ -491,14 +580,129 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             ;
         }
     };
+    public String hrPcg(){
+        int hr = 0,i = 0,j = 0,k = 0,average = 0,hr1 = 0;
+        int[] dM= new int[8],aM = new int[8];
 
+        //心电采样的800个点分成8段，每段100个点持续时间0.5秒
+        //在这100个点中找出最大值及其地址保存到dM和aM中；
+        while(i<(iMaxPoints/100)){
+            j = 0;
+            k = i*100;
+            dM[i] = dPcg[k];
+            aM[i] = k;
+            while(j<99){
+                if(dPcg[k+j+1] >= dM[i]){
+                    dM[i] = dPcg[k+j+1];
+                    aM[i] = k+j+1;
+                }
+                j++;
+            }
+            i++;
+        }
+        //最大值间距小于0.5秒的将小的最大值置零，两次心跳间隔不应小于0.5秒
+        //保留下来的最大值是可能最大的心跳峰值点；
+        i = 0;
+        j = 0;
+        while(i<7){
+            if(aM[i+1]-aM[i]<100){
+                j++;
+                if(dM[i+1]<dM[i]){
+                    dM[i+1] = 0;
+                    i = i + 2;
+                }else{
+                    dM[i] = 0;
+                    i++ ;
+                }
+            }else{
+                i++;
+            }
+
+        }
+        //计算保留的最大值的均值，防止由于分段过小（0.5秒），导致非峰值心跳误当作为心跳峰值；
+        //先计算平均峰值，进行比较各心跳峰值和平均峰值，小于均值的判定为假心跳峰值；
+        i = 0;
+        while (i < 8) {
+            average = average+dM[i];
+            i++;
+        }
+        if(j < 8) {
+            average = average / (8 - j);
+        }else{
+            average = 0;
+        }
+        //最大值小于最大值均值一半的峰值置零，为零的表示为假心跳峰值；
+        i = 0;
+        j = 0;
+        while (i < 8) {
+            if(dM[i] <= average/2){
+                dM[i] = 0;
+                j++;
+            };
+            i++;
+        }
+
+        //将此4秒时间段的心跳峰值个数保存在对应的心跳数组中
+        hrArray[hrCounter%15] = 8-j;
+        hrCounter++;
+
+        //保留在心跳数组中的心跳峰值个数求和，如果不满1分钟，则乘以系数15/j;
+        i = 0;
+        hr = 0;
+        j= hrCounter;
+        if(j>=15){
+            j = 15;
+        }
+        while(i < j){
+            hr = hr + hrArray[i];
+            i++;
+        }
+        if(j != 0) {
+            hr = hr * 15 / j;// 1分钟的心跳个数bpm
+        }else{
+            hr = 0;//心跳个数为零表示还未开始采样
+        }
+
+        //计算此4秒时间段保留下来的心跳峰值间的时间间隔总和的均值；
+        //利用时间间隔均值
+        i = 0;
+        j = 0;
+        k = 0;
+        hr1 = 0;
+        while(i < 8){
+            if(dM[i] != 0){
+                j = i + 1;
+                while(j < 8){
+                    if(dM[j] != 0){
+                        k = k + aM[j]-aM[i];
+                        i = j;
+                        j++;
+                        hr1++;
+                    }else{
+                        j++;
+                    }
+                }
+                i = 8;
+            }else {
+                i++;
+            }
+        }
+        if(k != 0) {
+            //平均心跳间隔时间计算所得的心律；
+            //（60秒*1000/5毫秒）/（k/hr1）：1分钟有60000毫秒，5毫秒采样一个点则总点数为12000个点
+            //心跳的周期平均是k/hr1个点，则心率为12000个点除以（k/hr1）bpm
+            hr1 = 12 * 1000 * hr1 / k;
+        }
+
+        return String.valueOf((hr1));
+    }
     public String hrEcg(){
         int hr = 0,i = 0,j = 0,k = 0,average = 0,hr1 = 0;
         int[] dM= new int[8],aM = new int[8];
 
         //心电采样的800个点分成8段，每段100个点持续时间0.5秒
         //在这100个点中找出最大值及其地址保存到dM和aM中；
-        while(i<8){
+        while(i<(iMaxPoints/100)){
             j = 0;
             k = i*100;
             dM[i] = dEcg[k];
@@ -683,9 +887,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         @Override
                         public void run() {//显示收到的数据字节数及轮询的时间周期/及采样通道标识//剩余电量
                             if(powerIdx > 0){
-                                text_state.setText("..电量："+String.valueOf(powerIdx)+"%:" + idS);// + String.valueOf(bytes));
+                                text_state.setText("..电量："+String.valueOf(powerIdx)+"%" + idS);// + String.valueOf(bytes));
                             }else{
-                                text_state.setText("..电量："+"--%:" + idS);// + String.valueOf(bytes));
+                                text_state.setText("..电量："+"--%" + idS);// + String.valueOf(bytes));
                             }
                         }
                     });
@@ -771,7 +975,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
                                         ds(hv,2);//更新血氧波形数据
 
-                                        if(idxV2%50==1){//大概每1秒更新下血氧波形
+                                        if((idxV2+1)%50==0){//大概每1秒更新下血氧波形
                                             Message msg = new Message();
                                             Bundle eData = new Bundle();
 
@@ -816,7 +1020,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                                             hv = h2*256+h1;
                                             ds(hv,3);
 
-                                            if(idxV3%200==1){//大概每1秒更新下心电波形
+                                            if((idxV3+1)%200==0){//大概每1秒更新下心电波形
                                                 Message msg = new Message();
                                                 Bundle eData = new Bundle();
 
@@ -854,6 +1058,14 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                                                         //chkFlag = 0;
                                                     }
                                                 }
+                                                else{
+                                                    dp_msg.post(new Runnable() {
+                                                        @Override
+                                                        public void run() {
+                                                            dp_msg.setText("文件操作失败！...请在手机设置中授权存储权限!");//+String.valueOf(dataLen));
+                                                        }
+                                                    });
+                                                }
                                             } catch (IOException e) {
                                                 e.printStackTrace();
                                             }
@@ -876,7 +1088,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
                                         //进行降频采样数据并显示波形
                                         while(xyjk < 4) {//16*10/2共80个心音数据采集点
-                                            h1 = dataReceived[xyCounter + 1 + xyjk*40];//心音4K采样率进行降频为400Hz进行波形显示，每10个点取一个值进行显示，即一次只有8个点显示；
+                                            h1 = dataReceived[xyCounter + 1 + xyjk*40];//心音4K采样率进行降频为200Hz进行波形显示，每10个点取一个值进行显示，即一次只有8个点显示；
                                             h2 = dataReceived[xyCounter + xyjk*40];
                                             if(h1<0){
                                                 h1 = h1+256;
@@ -886,7 +1098,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                                             }
                                             hv = h2*256+h1;
                                             ds(hv,1);
-                                            s1 = new SpannableString("心音\n"+String.valueOf(hv));
+                                            s1 = new SpannableString("心音\n"+String.valueOf(hv)+"\n"+heartRate+"bpm");
                                             t1_msg.post(new Runnable() {
                                                 @Override
                                                 public void run() {
@@ -894,7 +1106,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                                                     t1_msg.setText(s1);
                                                 }
                                             });
-                                            if(idxV1%200==1){//大概每1000毫秒更新下心音波形
+                                            if((idxV1+1)%200==0){//大概每1000毫秒更新下心音波形
                                                 Message msg = new Message();
                                                 Bundle eData = new Bundle();
 
@@ -1032,6 +1244,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                         eSocket.printStackTrace();
                     }
                 }
+                dp_msg.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        dp_msg.setText("请打开采样器蓝牙并重新启动测量！");
+                    }
+                });
             }
         }
 
@@ -1062,6 +1280,10 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             values2[j] = new DataPoint(a, z);
             values3[j] = new DataPoint(a, z);
         }
+        if(hrCounter != iMaxPoints){
+            hrCounter = 0;
+        }
+
         if(ecgCounter != iMaxPoints){
             ecgCounter = 0;
         }
@@ -1118,6 +1340,12 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             if (ecgCounter <= iMaxPoints - 1) {
                 dEcg[ecgCounter] = hv;
                 ecgCounter = ecgCounter + 1;
+            }
+        }
+        if(c == 1) {
+            if (hrCounter <= iMaxPoints - 1) {
+                dPcg[hrCounter] = hv;
+                hrCounter = hrCounter + 1;
             }
         }
     }
@@ -1233,6 +1461,17 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             }catch (FileNotFoundException e) {
                 e.printStackTrace();
             };
+            if(inStream == null){
+                chkFlag = 0;
+                dp_msg.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        dp_msg.setText(currentFile +"-文件不存在...");
+                    }
+                });
+
+                return;
+            }
             try {
                 size = inStream.available();
             }catch(IOException e){
